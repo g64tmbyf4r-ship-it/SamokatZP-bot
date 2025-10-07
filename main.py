@@ -96,7 +96,7 @@ async def process(msg: types.Message):
         try:
             user_data[user_id]["bonus70"] = int(text)
             user_data[user_id]["step"] = "global10"
-            await msg.answer("📦 Была ли надбавка +10₽ к каждому заказу сегодня? (да/нет)")
+            await msg.answer("📦 Была ли надбавка +10₽ к каждому заказу за погодные условия сегодня? (да/нет)")
         except ValueError:
             await msg.answer("❌ Введи число, например: 0")
             return
@@ -105,7 +105,7 @@ async def process(msg: types.Message):
         answer = text.lower()
         user_data[user_id]["global10"] = (answer == "да")
         user_data[user_id]["step"] = "weather15"
-        await msg.answer("🌦️ Была ли надбавка +15₽ к часовой ставке за погоду? (да/нет)")
+        await msg.answer("🌦️ Была ли надбавка +15₽ к часовой ставке за вс/пн? (да/нет)")
 
     elif step == "weather15":
         answer = text.lower()
