@@ -1,150 +1,154 @@
+import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 import asyncio
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable is not set")
+# Включаем логи для отладки
+logging.basicConfig(level=logging.INFO)
 
+# Получаем токен из переменных окружения (Render)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Хранилище данных пользователей
 user_data = {}
 
 
 @dp.message(Command("start"))
 async def start(msg: types.Message):
-    user_data[msg.from_user.id] = {"step": "hourly_rate"}
+    user_data[msg.from_user.id] = {}
+    user_data[msg.from_user.id]["step"] = "hourly_rate"
     await msg.answer("Привет! 💸 Введи часовую ставку (₽/час):")
 
 
 @dp.message(F.text)
 async def process(msg: types.Message):
     user_id = msg.from_user.id
-    if user_id not in user_data:
-        await msg.answer("Напиши /start, чтобы начать заново.")
+    text = msg.text.strip()
+
+    # Если пользователь не начинал с /start
+    if user_id not in user_data or "step" not in user_data[user_id]:
+        user_data[user_id] = {"step": "hourly_rate"}
+        await msg.answer("Начнём заново. 💸 Введи часовую ставку (₽/час):")
         return
 
-    step = user_data[user_id].get("step")
+    step = user_data[user_id]["step"]
 
-    # Шаг 1 — часовая ставка
+    # === ЛОГИКА ВОПРОСОВ ===
+
     if step == "hourly_rate":
         try:
-            user_data[user_id]["hourly_rate"] = float(msg.text)
+            user_data[user_id]["hourly_rate"] = float(text)
             user_data[user_id]["step"] = "order_rate"
-            await msg.answer("Сколько оплата за один заказ (₽)?")
+            await msg.answer("💰 Сколько оплата за один заказ (₽)?")
         except ValueError:
-            await msg.answer("Введи число, например 250.")
-        return
+            await msg.answer("❌ Введи число, например: 250")
+            return
 
-    # Шаг 2 — ставка за заказ
-    if step == "order_rate":
+    elif step == "order_rate":
         try:
-            user_data[user_id]["order_rate"] = float(msg.text)
+            user_data[user_id]["order_rate"] = float(text)
             user_data[user_id]["step"] = "hours"
-            await msg.answer("Сколько часов ты отработал сегодня?")
+            await msg.answer("⏰ Сколько часов ты отработал сегодня?")
         except ValueError:
-            await msg.answer("Введи число, например 5.")
-        return
+            await msg.answer("❌ Введи число, например: 8")
+            return
 
-    # Шаг 3 — часы
-    if step == "hours":
+    elif step == "hours":
         try:
-            user_data[user_id]["hours"] = float(msg.text)
+            user_data[user_id]["hours"] = float(text)
             user_data[user_id]["step"] = "orders"
-            await msg.answer("Сколько заказов ты доставил сегодня?")
+            await msg.answer("📦 Сколько заказов доставил сегодня?")
         except ValueError:
-            await msg.answer("Число, пожалуйста.")
-        return
-
-    # Шаг 4 — количество заказов
-    if step == "orders":
-        try:
-            user_data[user_id]["orders"] = int(msg.text)
-            user_data[user_id]["step"] = "plus10_orders"
-            await msg.answer("Сколько из них с надбавкой +10₽?")
-        except ValueError:
-            await msg.answer("Целое число, пожалуйста.")
-        return
-
-    # Шаг 5 — +10₽ за заказы
-    if step == "plus10_orders":
-        try:
-            user_data[user_id]["plus10_orders"] = int(msg.text)
-            user_data[user_id]["step"] = "plus30_orders"
-            await msg.answer("Сколько из них с надбавкой +30₽?")
-        except ValueError:
-            await msg.answer("Целое число.")
-        return
-
-    # Шаг 6 — +30₽ за заказы
-    if step == "plus30_orders":
-        try:
-            user_data[user_id]["plus30_orders"] = int(msg.text)
-            user_data[user_id]["step"] = "plus70_orders"
-            await msg.answer("Сколько из них с надбавкой +70₽?")
-        except ValueError:
-            await msg.answer("Целое число.")
-        return
-
-    # Шаг 7 — +70₽
-    if step == "plus70_orders":
-        try:
-            user_data[user_id]["plus70_orders"] = int(msg.text)
-            user_data[user_id]["step"] = "plus10_all"
-            kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            kb.add("Да", "Нет")
-            await msg.answer("Была ли надбавка +10₽ к каждому заказу?", reply_markup=kb)
-        except ValueError:
-            await msg.answer("Целое число.")
-        return
-
-    # Шаг 8 — надбавка ко всем заказам
-    if step == "plus10_all":
-        if msg.text.lower() not in ("да", "нет"):
-            await msg.answer("Ответь 'Да' или 'Нет'.")
+            await msg.answer("❌ Введи число, например: 15")
             return
-        user_data[user_id]["plus10_all"] = (msg.text.lower() == "да")
-        user_data[user_id]["step"] = "plus15_weather"
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        kb.add("Да", "Нет")
-        await msg.answer("Была ли надбавка +15₽ к часовой ставке за погоду?", reply_markup=kb)
-        return
 
-    # Шаг 9 — финальный расчёт
-    if step == "plus15_weather":
-        if msg.text.lower() not in ("да", "нет"):
-            await msg.answer("Ответь 'Да' или 'Нет'.")
+    elif step == "orders":
+        try:
+            user_data[user_id]["orders"] = int(text)
+            user_data[user_id]["step"] = "bonus10"
+            await msg.answer("➕ Сколько заказов с надбавкой +10₽?")
+        except ValueError:
+            await msg.answer("❌ Введи число, например: 3")
             return
-        user_data[user_id]["plus15_weather"] = (msg.text.lower() == "да")
 
+    elif step == "bonus10":
+        try:
+            user_data[user_id]["bonus10"] = int(text)
+            user_data[user_id]["step"] = "bonus30"
+            await msg.answer("🚀 Сколько заказов с надбавкой +30₽?")
+        except ValueError:
+            await msg.answer("❌ Введи число, например: 2")
+            return
+
+    elif step == "bonus30":
+        try:
+            user_data[user_id]["bonus30"] = int(text)
+            user_data[user_id]["step"] = "bonus70"
+            await msg.answer("🔥 Сколько заказов с надбавкой +70₽?")
+        except ValueError:
+            await msg.answer("❌ Введи число, например: 1")
+            return
+
+    elif step == "bonus70":
+        try:
+            user_data[user_id]["bonus70"] = int(text)
+            user_data[user_id]["step"] = "global10"
+            await msg.answer("📦 Была ли надбавка +10₽ к каждому заказу сегодня? (да/нет)")
+        except ValueError:
+            await msg.answer("❌ Введи число, например: 0")
+            return
+
+    elif step == "global10":
+        answer = text.lower()
+        user_data[user_id]["global10"] = (answer == "да")
+        user_data[user_id]["step"] = "weather15"
+        await msg.answer("🌦️ Была ли надбавка +15₽ к часовой ставке за погоду? (да/нет)")
+
+    elif step == "weather15":
+        answer = text.lower()
+        user_data[user_id]["weather15"] = (answer == "да")
+
+        # === РАСЧЁТ ===
         data = user_data[user_id]
-        base_salary = data['hours'] * data['hourly_rate'] + data['orders'] * data['order_rate']
-        bonus_orders = (data['plus10_orders'] * 10 +
-                        data['plus30_orders'] * 30 +
-                        data['plus70_orders'] * 70)
-        all_order_bonus = data['orders'] * 10 if data['plus10_all'] else 0
-        weather_bonus = data['hours'] * 15 if data['plus15_weather'] else 0
-        total = base_salary + bonus_orders + all_order_bonus + weather_bonus
 
-        await msg.answer(
-            f"💰 Расчёт за сегодня:\n"
-            f"Часы: {data['hours']} × {data['hourly_rate']}₽ = {data['hours'] * data['hourly_rate']:.2f}₽\n"
-            f"Заказы: {data['orders']} × {data['order_rate']}₽ = {data['orders'] * data['order_rate']:.2f}₽\n"
-            f"Надбавки за заказы: {bonus_orders}₽\n"
-            f"Надбавка +10₽ к каждому заказу: {all_order_bonus}₽\n"
-            f"Надбавка за погоду: {weather_bonus}₽\n\n"
-            f"💵 *ИТОГО: {total:.2f}₽*",
-            parse_mode="Markdown",
-            reply_markup=types.ReplyKeyboardRemove()
+        hourly_rate = data["hourly_rate"]
+        if data["weather15"]:
+            hourly_rate += 15
+
+        base = data["hours"] * hourly_rate
+        order_total = data["orders"] * data["order_rate"]
+
+        # Надбавки
+        bonus_total = (
+            data["bonus10"] * 10
+            + data["bonus30"] * 30
+            + data["bonus70"] * 70
         )
 
-        user_data.pop(user_id, None)
+        if data["global10"]:
+            bonus_total += data["orders"] * 10
+
+        total = base + order_total + bonus_total
+
+        await msg.answer(
+            f"💵 <b>Итог за сегодня:</b>\n"
+            f"— Часов: {data['hours']} × {hourly_rate}₽ = {base:.0f}₽\n"
+            f"— Заказы: {data['orders']} × {data['order_rate']}₽ = {order_total:.0f}₽\n"
+            f"— Надбавки: {bonus_total:.0f}₽\n\n"
+            f"💰 <b>Всего:</b> {total:.0f}₽",
+            parse_mode="HTML"
+        )
+
+        # После вывода сбрасываем шаг
+        user_data[user_id]["step"] = "done"
 
 
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
