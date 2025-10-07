@@ -1,154 +1,194 @@
 import logging
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
+from aiogram import F
+from aiogram.fsm.storage.memory import MemoryStorage
+from datetime import datetime
 import asyncio
+import json
 import os
 
-# Включаем логи для отладки
 logging.basicConfig(level=logging.INFO)
 
-# Получаем токен из переменных окружения (Render)
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 710958950  # твой Telegram ID
+STATS_FILE = "stats.json"
 
-# Хранилище данных пользователей
-user_data = {}
+bot = Bot(token=TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
 
+# === Работа со статистикой ===
+def load_stats():
+    """Загружает статистику из файла"""
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                data["unique_users"] = set(data["unique_users"])
+                data["today_date"] = datetime.strptime(data["today_date"], "%Y-%m-%d").date()
+                return data
+            except Exception:
+                pass
+    return {"today_date": datetime.now().date(), "unique_users": set(), "calculations": 0}
 
+def save_stats():
+    """Сохраняет статистику в файл"""
+    data = {
+        "today_date": str(stats["today_date"]),
+        "unique_users": list(stats["unique_users"]),
+        "calculations": stats["calculations"],
+    }
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+stats = load_stats()
+
+def update_stats(user_id: int):
+    """Обновляет статистику за день"""
+    global stats
+    today = datetime.now().date()
+    if stats["today_date"] != today:
+        stats = {"today_date": today, "unique_users": set(), "calculations": 0}
+    stats["unique_users"].add(user_id)
+    stats["calculations"] += 1
+    save_stats()
+
+# === Состояния ===
+class Form(StatesGroup):
+    hourly_rate = State()
+    order_rate_15 = State()
+    hours_worked = State()
+    orders_15 = State()
+    orders_30 = State()
+    bonus_10 = State()
+    bonus_30 = State()
+    bonus_70 = State()
+    weather_bonus_orders = State()
+    weekend_bonus_hourly = State()
+
+# === Логика ===
 @dp.message(Command("start"))
-async def start(msg: types.Message):
-    user_data[msg.from_user.id] = {}
-    user_data[msg.from_user.id]["step"] = "hourly_rate"
-    await msg.answer("Привет! 💸 Введи часовую ставку (₽/час):")
+async def start(message: types.Message, state: FSMContext):
+    await message.answer("Привет! 💸 Введи часовую ставку (₽/час):")
+    await state.set_state(Form.hourly_rate)
 
+@dp.message(Form.hourly_rate)
+async def hourly_rate_handler(message: types.Message, state: FSMContext):
+    await state.update_data(hourly_rate=float(message.text))
+    await message.answer("📦 Какая у тебя оплата за заказ 15-минутный (₽):")
+    await state.set_state(Form.order_rate_15)
 
-@dp.message(F.text)
-async def process(msg: types.Message):
-    user_id = msg.from_user.id
-    text = msg.text.strip()
+@dp.message(Form.order_rate_15)
+async def order_rate_handler(message: types.Message, state: FSMContext):
+    await state.update_data(order_rate_15=float(message.text))
+    await message.answer("⏰ Сколько часов отработано сегодня?")
+    await state.set_state(Form.hours_worked)
 
-    # Если пользователь не начинал с /start
-    if user_id not in user_data or "step" not in user_data[user_id]:
-        user_data[user_id] = {"step": "hourly_rate"}
-        await msg.answer("Начнём заново. 💸 Введи часовую ставку (₽/час):")
+@dp.message(Form.hours_worked)
+async def hours_handler(message: types.Message, state: FSMContext):
+    await state.update_data(hours=float(message.text))
+    await message.answer("🚴‍♂️ Сколько 15-минутных заказов доставлено?")
+    await state.set_state(Form.orders_15)
+
+@dp.message(Form.orders_15)
+async def orders15_handler(message: types.Message, state: FSMContext):
+    await state.update_data(orders_15=int(message.text))
+    await message.answer("🚚 Сколько 30-минутных заказов доставлено?")
+    await state.set_state(Form.orders_30)
+
+@dp.message(Form.orders_30)
+async def orders30_handler(message: types.Message, state: FSMContext):
+    await state.update_data(orders_30=int(message.text))
+    await message.answer("🔹 Сколько заказов с надбавкой +10₽ за 45 доставленных заказов за день?")
+    await state.set_state(Form.bonus_10)
+
+@dp.message(Form.bonus_10)
+async def bonus10_handler(message: types.Message, state: FSMContext):
+    await state.update_data(bonus_10=int(message.text))
+    await message.answer("🔸 Сколько заказов с надбавкой +30₽?")
+    await state.set_state(Form.bonus_30)
+
+@dp.message(Form.bonus_30)
+async def bonus30_handler(message: types.Message, state: FSMContext):
+    await state.update_data(bonus_30=int(message.text))
+    await message.answer("🔺 Сколько заказов с надбавкой +70₽?")
+    await state.set_state(Form.bonus_70)
+
+@dp.message(Form.bonus_70)
+async def bonus70_handler(message: types.Message, state: FSMContext):
+    await state.update_data(bonus_70=int(message.text))
+    await message.answer("📦 Была ли надбавка +10₽ к каждому заказу сегодня за погодные условия? (да/нет)")
+    await state.set_state(Form.weather_bonus_orders)
+
+@dp.message(Form.weather_bonus_orders)
+async def weather_bonus_orders_handler(message: types.Message, state: FSMContext):
+    await state.update_data(weather_bonus_orders=message.text.lower() == "да")
+    await message.answer("🌦️ Была ли надбавка +15₽ к часовой ставке за вс/пн? (да/нет)")
+    await state.set_state(Form.weekend_bonus_hourly)
+
+@dp.message(Form.weekend_bonus_hourly)
+async def weekend_bonus_handler(message: types.Message, state: FSMContext):
+    data = await state.update_data(weekend_bonus_hourly=message.text.lower() == "да")
+
+    hourly_rate = data["hourly_rate"]
+    order_rate_15 = data["order_rate_15"]
+    hours = data["hours"]
+    orders_15 = data["orders_15"]
+    orders_30 = data["orders_30"]
+    bonus_10 = data["bonus_10"]
+    bonus_30 = data["bonus_30"]
+    bonus_70 = data["bonus_70"]
+    weather_bonus_orders = data["weather_bonus_orders"]
+    weekend_bonus_hourly = data["weekend_bonus_hourly"]
+
+    # Расчёт
+    hourly_total = hours * (hourly_rate + (15 if weekend_bonus_hourly else 0))
+    orders_total = (orders_15 * order_rate_15) + (orders_30 * (order_rate_15 + 10))
+    bonuses_total = (bonus_10 * 10) + (bonus_30 * 30) + (bonus_70 * 70)
+    weather_bonus_total = (orders_15 + orders_30) * 10 if weather_bonus_orders else 0
+
+    total = hourly_total + orders_total + bonuses_total + weather_bonus_total
+
+    # Обновляем статистику
+    update_stats(message.from_user.id)
+
+    text = (
+        f"📊 Итог за день:\n\n"
+        f"⏰ Часы: {hours} × {hourly_rate}₽ = {hourly_total:.2f}₽\n"
+        f"🚴 15-мин заказов: {orders_15} × {order_rate_15}₽ = {orders_15 * order_rate_15:.2f}₽\n"
+        f"🚚 30-мин заказов: {orders_30} × {order_rate_15 + 10}₽ = {orders_30 * (order_rate_15 + 10):.2f}₽\n"
+        f"💰 Надбавки: +{bonuses_total}₽\n"
+        f"🌦️ Погодная надбавка: +{weather_bonus_total}₽\n\n"
+        f"💸 ИТОГО: <b>{total:.2f}₽</b>"
+    )
+
+    await message.answer(text, parse_mode="HTML")
+    await state.clear()
+
+@dp.message(Command("stats"))
+async def show_stats(message: types.Message):
+    """Показывает статистику (только для админа)"""
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ У тебя нет доступа к статистике.")
         return
 
-    step = user_data[user_id]["step"]
+    today = datetime.now().strftime("%d.%m.%Y")
+    total_users = len(stats["unique_users"])
+    total_calculations = stats["calculations"]
 
-    # === ЛОГИКА ВОПРОСОВ ===
+    text = (
+        f"📊 <b>Статистика за {today}</b>\n\n"
+        f"👥 Уникальных пользователей: {total_users}\n"
+        f"🧮 Всего расчётов за день: {total_calculations}\n"
+        f"💾 Дата последнего сохранения: {stats['today_date']}"
+    )
 
-    if step == "hourly_rate":
-        try:
-            user_data[user_id]["hourly_rate"] = float(text)
-            user_data[user_id]["step"] = "order_rate"
-            await msg.answer("💰 Сколько оплата за один заказ (₽)?")
-        except ValueError:
-            await msg.answer("❌ Введи число, например: 250")
-            return
-
-    elif step == "order_rate":
-        try:
-            user_data[user_id]["order_rate"] = float(text)
-            user_data[user_id]["step"] = "hours"
-            await msg.answer("⏰ Сколько часов ты отработал сегодня?")
-        except ValueError:
-            await msg.answer("❌ Введи число, например: 8")
-            return
-
-    elif step == "hours":
-        try:
-            user_data[user_id]["hours"] = float(text)
-            user_data[user_id]["step"] = "orders"
-            await msg.answer("📦 Сколько заказов доставил сегодня?")
-        except ValueError:
-            await msg.answer("❌ Введи число, например: 15")
-            return
-
-    elif step == "orders":
-        try:
-            user_data[user_id]["orders"] = int(text)
-            user_data[user_id]["step"] = "bonus10"
-            await msg.answer("➕ Сколько заказов с надбавкой +10₽?")
-        except ValueError:
-            await msg.answer("❌ Введи число, например: 3")
-            return
-
-    elif step == "bonus10":
-        try:
-            user_data[user_id]["bonus10"] = int(text)
-            user_data[user_id]["step"] = "bonus30"
-            await msg.answer("🚀 Сколько заказов с надбавкой +30₽?")
-        except ValueError:
-            await msg.answer("❌ Введи число, например: 2")
-            return
-
-    elif step == "bonus30":
-        try:
-            user_data[user_id]["bonus30"] = int(text)
-            user_data[user_id]["step"] = "bonus70"
-            await msg.answer("🔥 Сколько заказов с надбавкой +70₽?")
-        except ValueError:
-            await msg.answer("❌ Введи число, например: 1")
-            return
-
-    elif step == "bonus70":
-        try:
-            user_data[user_id]["bonus70"] = int(text)
-            user_data[user_id]["step"] = "global10"
-            await msg.answer("📦 Была ли надбавка +10₽ к каждому заказу за погодные условия сегодня? (да/нет)")
-        except ValueError:
-            await msg.answer("❌ Введи число, например: 0")
-            return
-
-    elif step == "global10":
-        answer = text.lower()
-        user_data[user_id]["global10"] = (answer == "да")
-        user_data[user_id]["step"] = "weather15"
-        await msg.answer("🌦️ Была ли надбавка +15₽ к часовой ставке за вс/пн? (да/нет)")
-
-    elif step == "weather15":
-        answer = text.lower()
-        user_data[user_id]["weather15"] = (answer == "да")
-
-        # === РАСЧЁТ ===
-        data = user_data[user_id]
-
-        hourly_rate = data["hourly_rate"]
-        if data["weather15"]:
-            hourly_rate += 15
-
-        base = data["hours"] * hourly_rate
-        order_total = data["orders"] * data["order_rate"]
-
-        # Надбавки
-        bonus_total = (
-            data["bonus10"] * 10
-            + data["bonus30"] * 30
-            + data["bonus70"] * 70
-        )
-
-        if data["global10"]:
-            bonus_total += data["orders"] * 10
-
-        total = base + order_total + bonus_total
-
-        await msg.answer(
-            f"💵 <b>Итог за сегодня:</b>\n"
-            f"— Часов: {data['hours']} × {hourly_rate}₽ = {base:.0f}₽\n"
-            f"— Заказы: {data['orders']} × {data['order_rate']}₽ = {order_total:.0f}₽\n"
-            f"— Надбавки: {bonus_total:.0f}₽\n\n"
-            f"💰 <b>Всего:</b> {total:.0f}₽",
-            parse_mode="HTML"
-        )
-
-        # После вывода сбрасываем шаг
-        user_data[user_id]["step"] = "done"
-
+    await message.answer(text, parse_mode="HTML")
 
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
